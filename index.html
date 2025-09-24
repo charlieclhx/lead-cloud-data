@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personnel List - Cloud Sync</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    
+    <!-- 引入 LeanCloud SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/leancloud-storage@4.13.2/dist/av-min.js"></script>
+    
+    <!-- Tailwind配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        accent: '#6366F1',
+                        neutral: '#64748B',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .table-shadow {
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            .hover-effect {
+                transition: all 0.2s ease-in-out;
+            }
+            .hover-effect:hover {
+                transform: translateY(-2px);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- 页面标题 -->
+        <header class="mb-8 text-center">
+            <h1 class="text-[clamp(1.8rem,4vw,2.5rem)] font-bold text-gray-800 mb-2">Personnel List</h1>
+            <p class="text-gray-600">Cloud-synced personnel information</p>
+            <div id="syncStatus" class="mt-2 text-sm">
+                <span id="statusText" class="px-3 py-1 rounded-full bg-gray-100 text-gray-600">
+                    <i class="fa fa-circle text-yellow-500 mr-1"></i> Initializing...
+                </span>
+            </div>
+        </header>
+        
+        <!-- 功能区 -->
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+            <div class="relative w-full sm:w-64">
+                <input type="text" id="searchInput" 
+                       class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+                       placeholder="Search by name..." disabled>
+                <i class="fa fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+            
+            <div class="flex gap-2">
+                <button id="refreshBtn" 
+                        class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all disabled:opacity-50"
+                        disabled>
+                    <i class="fa fa-refresh"></i> Refresh
+                </button>
+                <button id="addBtn" 
+                        class="bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-all hover:shadow-lg disabled:opacity-50"
+                        disabled>
+                    <i class="fa fa-plus"></i> Add Person
+                </button>
+            </div>
+        </div>
+        
+        <!-- 加载状态 -->
+        <div id="loadingState" class="text-center py-16">
+            <div class="inline-flex flex-col items-center gap-3 text-gray-500">
+                <i class="fa fa-spinner fa-spin text-3xl"></i>
+                <span>Loading personnel data from cloud...</span>
+                <button id="retryBtn" class="mt-2 bg-primary text-white px-4 py-2 rounded-lg hidden">
+                    <i class="fa fa-refresh mr-2"></i>Retry Connection
+                </button>
+            </div>
+        </div>
+        
+        <!-- 人员列表表格 -->
+        <div id="tableContainer" class="hidden overflow-x-auto bg-white rounded-xl table-shadow">
+            <table class="w-full text-left">
+                <thead>
+                    <tr class="bg-gray-100 border-b border-gray-200">
+                        <th class="px-6 py-4 font-semibold text-gray-700">Number</th>
+                        <th class="px-6 py-4 font-semibold text-gray-700">Name</th>
+                        <th class="px-6 py-4 font-semibold text-gray-700">Age</th>
+                        <th class="px-6 py-4 font-semibold text-gray-700">Nationality</th>
+                        <th class="px-6 py-4 font-semibold text-gray-700">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="personnelTable">
+                    <!-- 表格内容将通过JavaScript动态生成 -->
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 空状态提示 -->
+        <div id="emptyState" class="hidden py-16 text-center">
+            <i class="fa fa-users text-gray-300 text-5xl mb-4"></i>
+            <p class="text-gray-500">No personnel records found</p>
+            <button id="emptyAddBtn" 
+                    class="mt-4 bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium transition-all">
+                Add First Person
+            </button>
+        </div>
+
+        <!-- 错误状态 -->
+        <div id="errorState" class="hidden py-16 text-center">
+            <i class="fa fa-exclamation-triangle text-red-300 text-5xl mb-4"></i>
+            <p class="text-red-500 font-medium mb-2">Failed to connect to cloud service</p>
+            <p class="text-gray-600 text-sm mb-4">Please check your internet connection and try again</p>
+            <button id="errorRetryBtn" 
+                    class="bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium transition-all">
+                <i class="fa fa-refresh mr-2"></i>Try Again
+            </button>
+        </div>
+    </div>
+    
+    <!-- 添加/编辑人员的模态框 -->
+    <div id="modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl w-full max-w-md p-6 transform transition-all scale-95 opacity-0" id="modalContent">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="modalTitle" class="text-xl font-bold text-gray-800">Add New Person</h2>
+                <button id="closeModal" class="text-gray-500 hover:text-gray-700">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <form id="personForm">
+                <input type="hidden" id="personId">
+                
+                <div class="mb-4">
+                    <label for="name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                    <input type="text" id="name" required
+                           class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all">
+                </div>
+                
+                <div class="mb-4">
+                    <label for="age" class="block text-sm font-medium text-gray-700 mb-1">Age</label>
+                    <input type="number" id="age" min="0" max="150" required
+                           class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all">
+                </div>
+                
+                <div class="mb-6">
+                    <label for="nationality" class="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
+                    <input type="text" id="nationality" required
+                           class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all">
+                </div>
+                
+                <div class="flex gap-3">
+                    <button type="button" id="cancelBtn" 
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-all">
+                        Cancel
+                    </button>
+                    <button type="submit" id="saveBtn"
+                            class="flex-1 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-all flex items-center justify-center gap-2">
+                        <i class="fa fa-cloud-upload"></i> Save
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // LeanCloud 配置
+        const LEANCLOUD_CONFIG = {
+            APP_ID: 'FSVJHfWtDx11PLF8u7bXAA87-gc6coltsz',
+            APP_KEY: '6533zhqnpmhbb1f347XGS1bh',
+            SERVER_URL: 'https://fsvjhfwt.lc-cn-n1-shared.com'
+        };
+
+        // 全局变量
+        let personnel = [];
+        let isInitialized = false;
+
+        // DOM元素
+        const elements = {
+            personnelTable: document.getElementById('personnelTable'),
+            tableContainer: document.getElementById('tableContainer'),
+            emptyState: document.getElementById('emptyState'),
+            loadingState: document.getElementById('loadingState'),
+            errorState: document.getElementById('errorState'),
+            searchInput: document.getElementById('searchInput'),
+            addBtn: document.getElementById('addBtn'),
+            refreshBtn: document.getElementById('refreshBtn'),
+            emptyAddBtn: document.getElementById('emptyAddBtn'),
+            retryBtn: document.getElementById('retryBtn'),
+            errorRetryBtn: document.getElementById('errorRetryBtn'),
+            modal: document.getElementById('modal'),
+            modalContent: document.getElementById('modalContent'),
+            modalTitle: document.getElementById('modalTitle'),
+            personForm: document.getElementById('personForm'),
+            personId: document.getElementById('personId'),
+            nameInput: document.getElementById('name'),
+            ageInput: document.getElementById('age'),
+            nationalityInput: document.getElementById('nationality'),
+            closeModal: document.getElementById('closeModal'),
+            cancelBtn: document.getElementById('cancelBtn'),
+            saveBtn: document.getElementById('saveBtn'),
+            statusText: document.getElementById('statusText')
+        };
+
+        // 状态管理
+        function setStatus(message, type = 'info') {
+            const colors = {
+                success: 'bg-green-100 text-green-600',
+                error: 'bg-red-100 text-red-600',
+                warning: 'bg-yellow-100 text-yellow-600',
+                info: 'bg-gray-100 text-gray-600'
+            };
+            
+            const icons = {
+                success: 'fa-check-circle',
+                error: 'fa-exclamation-circle',
+                warning: 'fa-exclamation-triangle',
+                info: 'fa-info-circle'
+            };
+            
+            elements.statusText.innerHTML = `
+                <i class="fa ${icons[type]} mr-1"></i> ${message}
+            `;
+            elements.statusText.className = `px-3 py-1 rounded-full ${colors[type]}`;
+        }
+
+        // 显示/隐藏界面元素
+        function showView(viewName) {
+            // 隐藏所有视图
+            elements.loadingState.classList.add('hidden');
+            elements.tableContainer.classList.add('hidden');
+            elements.emptyState.classList.add('hidden');
+            elements.errorState.classList.add('hidden');
+            
+            // 启用/禁用控件
+            const isReady = viewName === 'table' || viewName === 'empty';
+            elements.searchInput.disabled = !isReady;
+            elements.addBtn.disabled = !isReady;
+            elements.refreshBtn.disabled = !isReady;
+            
+            // 显示目标视图
+            switch(viewName) {
+                case 'loading':
+                    elements.loadingState.classList.remove('hidden');
+                    elements.retryBtn.classList.add('hidden');
+                    break;
+                case 'table':
+                    elements.tableContainer.classList.remove('hidden');
+                    break;
+                case 'empty':
+                    elements.emptyState.classList.remove('hidden');
+                    break;
+                case 'error':
+                    elements.errorState.classList.remove('hidden');
+                    break;
+            }
+        }
+
+        // 初始化LeanCloud
+        async function initializeLeanCloud() {
+            try {
+                setStatus('Connecting to cloud service...', 'info');
+                
+                // 初始化LeanCloud
+                AV.init({
+                    appId: LEANCLOUD_CONFIG.APP_ID,
+                    appKey: LEANCLOUD_CONFIG.APP_KEY,
+                    serverURLs: LEANCLOUD_CONFIG.SERVER_URL
+                });
+                
+                // 测试连接
+                const TestObject = AV.Object.extend('Test');
+                const testObject = new TestObject();
+                testObject.set('test', 'connection');
+                await testObject.save();
+                await testObject.destroy();
+                
+                isInitialized = true;
+                setStatus('Cloud service connected', 'success');
+                return true;
+            } catch (error) {
+                console.error('LeanCloud initialization failed:', error);
+                setStatus('Cloud connection failed', 'error');
+                return false;
+            }
+        }
+
+        // 从LeanCloud加载数据
+        async function loadFromCloud() {
+            if (!isInitialized) {
+                const initialized = await initializeLeanCloud();
+                if (!initialized) {
+                    showView('error');
+                    return;
+                }
+            }
+            
+            try {
+                showView('loading');
+                setStatus('Loading data...', 'info');
+                
+                const query = new AV.Query('Personnel');
+                query.addDescending('createdAt');
+                const results = await query.find();
+                
+                personnel = results.map(item => ({
+                    id: item.id,
+                    name: item.get('name') || 'Unknown',
+                    age: item.get('age') || 0,
+                    nationality: item.get('nationality') || 'Unknown',
+                    createdAt: item.createdAt,
+                    updatedAt: item.updatedAt
+                }));
+                
+                setStatus(`Loaded ${personnel.length} records`, 'success');
+                renderTable();
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                setStatus('Failed to load data', 'error');
+                showView('error');
+            }
+        }
+
+        // 保存到LeanCloud
+        async function saveToCloud(personData, isNew = true) {
+            try {
+                let person;
+                if (isNew) {
+                    const Personnel = AV.Object.extend('Personnel');
+                    person = new Personnel();
+                } else {
+                    person = AV.Object.createWithoutData('Personnel', personData.id);
+                }
+                
+                person.set('name', personData.name);
+                person.set('age', personData.age);
+                person.set('nationality', personData.nationality);
+                
+                await person.save();
+                return person;
+            } catch (error) {
+                console.error('Error saving data:', error);
+                throw error;
+            }
+        }
+
+        // 从LeanCloud删除
+        async function deleteFromCloud(id) {
+            try {
+                const person = AV.Object.createWithoutData('Personnel', id);
+                await person.destroy();
+                return true;
+            } catch (error) {
+                console.error('Error deleting data:', error);
+                throw error;
+            }
+        }
+
+        // 渲染表格
+        function renderTable(filteredData = null) {
+            const data = filteredData || personnel;
+            elements.personnelTable.innerHTML = '';
+            
+            if (data.length === 0) {
+                showView('empty');
+                return;
+            }
+            
+            data.forEach((person, index) => {
+                const row = document.createElement('tr');
+                row.className = 'border-b border-gray-100 hover:bg-gray-50 hover-effect';
+                
+                row.innerHTML = `
+                    <td class="px-6 py-4 text-gray-800">${index + 1}</td>
+                    <td class="px-6 py-4 font-medium text-gray-900">${person.name}</td>
+                    <td class="px-6 py-4 text-gray-800">${person.age}</td>
+                    <td class="px-6 py-4 text-gray-800">${person.nationality}</td>
+                    <td class="px-6 py-4">
+                        <div class="flex gap-2">
+                            <button onclick="editPerson('${person.id}')" class="text-accent hover:text-accent/80 transition-colors">
+                                <i class="fa fa-pencil"></i>
+                            </button>
+                            <button onclick="deletePerson('${person.id}')" class="text-red-500 hover:text-red-600 transition-colors">
+                                <i class="fa fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                `;
+                
+                elements.personnelTable.appendChild(row);
+            });
+            
+            showView('table');
+        }
+        
+        // 搜索功能
+        elements.searchInput.addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const filtered = personnel.filter(person => 
+                person.name.toLowerCase().includes(searchTerm) || 
+                person.nationality.toLowerCase().includes(searchTerm)
+            );
+            renderTable(filtered);
+        });
+        
+        // 打开添加人员模态框
+        function openAddModal() {
+            elements.modalTitle.textContent = 'Add New Person';
+            elements.personForm.reset();
+            elements.personId.value = '';
+            openModal();
+        }
+        
+        // 打开编辑人员模态框
+        async function editPerson(id) {
+            const person = personnel.find(p => p.id === id);
+            if (person) {
+                elements.modalTitle.textContent = 'Edit Person';
+                elements.personId.value = person.id;
+                elements.nameInput.value = person.name;
+                elements.ageInput.value = person.age;
+                elements.nationalityInput.value = person.nationality;
+                openModal();
+            }
+        }
+        
+        // 删除人员
+        async function deletePerson(id) {
+            if (confirm('Are you sure you want to delete this person?')) {
+                try {
+                    setStatus('Deleting...', 'info');
+                    await deleteFromCloud(id);
+                    personnel = personnel.filter(person => person.id !== id);
+                    setStatus('Person deleted successfully', 'success');
+                    renderTable();
+                } catch (error) {
+                    setStatus('Failed to delete person', 'error');
+                    console.error('Delete error:', error);
+                    alert('Failed to delete. Please try again.');
+                }
+            }
+        }
+        
+        // 打开模态框
+        function openModal() {
+            elements.modal.classList.remove('hidden');
+            setTimeout(() => {
+                elements.modalContent.classList.remove('scale-95', 'opacity-0');
+                elements.modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+            elements.nameInput.focus();
+        }
+        
+        // 关闭模态框
+        function closeModalFunc() {
+            elements.modalContent.classList.remove('scale-100', 'opacity-100');
+            elements.modalContent.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                elements.modal.classList.add('hidden');
+            }, 200);
+        }
+        
+        // 表单提交处理
+        elements.personForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const id = elements.personId.value;
+            const name = elements.nameInput.value.trim();
+            const age = parseInt(elements.ageInput.value);
+            const nationality = elements.nationalityInput.value.trim();
+            
+            if (!name || !nationality || isNaN(age)) {
+                alert('Please fill in all fields correctly');
+                return;
+            }
+
+            try {
+                elements.saveBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Saving...';
+                elements.saveBtn.disabled = true;
+
+                let savedPerson;
+                if (id) {
+                    // 更新现有人员
+                    savedPerson = await saveToCloud({ id, name, age, nationality }, false);
+                    const index = personnel.findIndex(p => p.id === id);
+                    if (index !== -1) {
+                        personnel[index] = { 
+                            ...personnel[index], 
+                            name, 
+                            age, 
+                            nationality,
+                            updatedAt: savedPerson.updatedAt
+                        };
+                    }
+                    setStatus('Person updated successfully', 'success');
+                } else {
+                    // 添加新人员
+                    savedPerson = await saveToCloud({ name, age, nationality }, true);
+                    personnel.unshift({
+                        id: savedPerson.id,
+                        name,
+                        age,
+                        nationality,
+                        createdAt: savedPerson.createdAt,
+                        updatedAt: savedPerson.updatedAt
+                    });
+                    setStatus('Person added successfully', 'success');
+                }
+                
+                renderTable();
+                closeModalFunc();
+            } catch (error) {
+                console.error('Save error:', error);
+                setStatus('Failed to save person', 'error');
+                alert('Failed to save. Please check your connection and try again.');
+            } finally {
+                elements.saveBtn.innerHTML = '<i class="fa fa-cloud-upload"></i> Save';
+                elements.saveBtn.disabled = false;
+            }
+        });
+        
+        // 事件监听器
+        elements.addBtn.addEventListener('click', openAddModal);
+        elements.emptyAddBtn.addEventListener('click', openAddModal);
+        elements.refreshBtn.addEventListener('click', loadFromCloud);
+        elements.closeModal.addEventListener('click', closeModalFunc);
+        elements.cancelBtn.addEventListener('click', closeModalFunc);
+        elements.retryBtn.addEventListener('click', loadFromCloud);
+        elements.errorRetryBtn.addEventListener('click', loadFromCloud);
+        
+        // 点击模态框外部关闭
+        elements.modal.addEventListener('click', (e) => {
+            if (e.target === elements.modal) {
+                closeModalFunc();
+            }
+        });
+        
+        // 按ESC键关闭模态框
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !elements.modal.classList.contains('hidden')) {
+                closeModalFunc();
+            }
+        });
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFromCloud();
+        });
+
+        // 暴露函数到全局作用域
+        window.editPerson = editPerson;
+        window.deletePerson = deletePerson;
+    </script>
+</body>
+</html>
